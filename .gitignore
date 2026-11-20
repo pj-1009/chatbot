@@ -3,4 +3,3 @@ __pycache__/
 # Generated passwords
 .env
 k8s/db-secret.env
-docs/demo-walkthrough/

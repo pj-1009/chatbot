@@ -137,3 +137,5 @@ flowchart TD
 ## Running it without Kubernetes
 
 `make serve` runs the same `server.py` on your Mac at http://localhost:8099. It uses the native Ollama app and a pgvector Postgres container on port 5433. `make ingest` loads the knowledge base into that container; run `ollama pull nomic-embed-text` once first. `make run` starts the terminal chat (`chat.py`), which talks to Ollama directly and keeps its history in memory, without a database or RAG.
+
+To see all of this in action, follow the [demo steps](demo.md).
