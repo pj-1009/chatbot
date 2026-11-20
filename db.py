@@ -19,7 +19,7 @@ SCHEMA = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS documents (
-    source       TEXT        PRIMARY KEY,   -- file path, e.g. docs/demo.md
+    source       TEXT        PRIMARY KEY,   -- file path, e.g. docs/architecture.md
     content_hash TEXT        NOT NULL,      -- to skip files that haven't changed
     ingested_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

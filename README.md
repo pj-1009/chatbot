@@ -6,7 +6,7 @@ A simple chatbot that talks to a local LLM through [Ollama](https://ollama.com).
 - answers questions about this project from its own documentation, using RAG (retrieval-augmented generation);
 - runs on Kubernetes.
 
-See [docs/architecture.md](docs/architecture.md) for diagrams of the components and the request flow, and [docs/demo.md](docs/demo.md) for a step-by-step demo walkthrough.
+See [docs/architecture.md](docs/architecture.md) for diagrams of the components and the request flow.
 
 ## Files
 
