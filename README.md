@@ -2,6 +2,8 @@
 
 A simple chatbot that talks to a local LLM through [Ollama](https://ollama.com). It comes as a terminal app and as a web app. The web app stores conversations in PostgreSQL and runs on Kubernetes.
 
+See [docs/architecture.md](docs/architecture.md) for diagrams of the components and the request flow.
+
 ## Files
 
 | File | What it is |
