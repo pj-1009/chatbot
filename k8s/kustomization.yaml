@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: chatbot
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - ollama.yaml
+  - chatbot.yaml
+
+# Database credentials (PGUSER, PGPASSWORD, PGDATABASE). db-secret.env is
+# generated with a random password by `make k8s-up` and is git-ignored, so no
+# password is ever committed. A changed secret gets a new name suffix, so the
+# pods restart with it.
+secretGenerator:
+  - name: chatbot-db
+    envs:
+      - db-secret.env

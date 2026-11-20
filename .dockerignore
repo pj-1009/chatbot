@@ -1,0 +1,6 @@
+*
+!requirements.txt
+!chat.py
+!db.py
+!server.py
+!static/

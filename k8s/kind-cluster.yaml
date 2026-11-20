@@ -1,0 +1,11 @@
+# A one-node local cluster for `make k8s-up`. The port mapping exposes the
+# chatbot Service on http://localhost:8090. Port 8090 avoids the controlplane
+# cluster's 8080, so both clusters can run at once.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30090 # chatbot Service nodePort
+        hostPort: 8090
+        listenAddress: 127.0.0.1

@@ -1,0 +1,89 @@
+# Ollama, the model server. One replica with the models on a PersistentVolume,
+# so the multi-GB download happens once and survives pod restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  labels: { app.kubernetes.io/name: ollama }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 15Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ollama
+  labels: { app.kubernetes.io/name: ollama }
+data:
+  OLLAMA_MODEL: gemma4:e2b
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  labels: { app.kubernetes.io/name: ollama }
+spec:
+  replicas: 1
+  # The volume is ReadWriteOnce, so the old pod must stop before the new one starts.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: ollama }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: ollama }
+    spec:
+      initContainers:
+        # Downloads the model if it isn't on the volume yet. When it's already
+        # there, `ollama pull` only checks it and finishes quickly.
+        - name: pull-model
+          image: ollama/ollama:0.35.1
+          command:
+            - sh
+            - -c
+            - |
+              ollama serve &
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              ollama pull "$OLLAMA_MODEL"
+          envFrom: [{ configMapRef: { name: ollama } }]
+          volumeMounts: [{ name: models, mountPath: /root/.ollama }]
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.35.1
+          ports: [{ name: http, containerPort: 11434 }]
+          env:
+            # Keep the model in memory between chats instead of the default 5 minutes.
+            - { name: OLLAMA_KEEP_ALIVE, value: "1h" }
+            # One request at a time and a modest context window keep memory use down on CPU.
+            - { name: OLLAMA_NUM_PARALLEL, value: "1" }
+            - { name: OLLAMA_CONTEXT_LENGTH, value: "4096" }
+          resources:
+            requests: { cpu: "2", memory: 3Gi }
+            limits: { memory: 6Gi }
+          startupProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/version, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+          volumeMounts: [{ name: models, mountPath: /root/.ollama }]
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: ollama-models }
+---
+# Cluster-internal only: just the chatbot talks to Ollama.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  labels: { app.kubernetes.io/name: ollama }
+spec:
+  selector: { app.kubernetes.io/name: ollama }
+  ports:
+    - { name: http, port: 11434, targetPort: http }
