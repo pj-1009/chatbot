@@ -6,6 +6,7 @@ resources:
   - postgres.yaml
   - ollama.yaml
   - chatbot.yaml
+  - ingest.yaml
 
 # Database credentials (PGUSER, PGPASSWORD, PGDATABASE). db-secret.env is
 # generated with a random password by `make k8s-up` and is git-ignored, so no

@@ -2,5 +2,12 @@
 !requirements.txt
 !chat.py
 !db.py
+!rag.py
 !server.py
+!ingest.py
 !static/
+# Knowledge base for RAG, loaded by the ingest job
+!README.md
+!prompt.md
+!docs/
+!knowledge/

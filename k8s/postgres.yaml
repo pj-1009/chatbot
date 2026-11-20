@@ -1,5 +1,6 @@
-# Postgres for the local cluster: stores the chat messages that every chatbot
-# replica reads and writes. In production, use a managed database (RDS,
+# Postgres for the local cluster: stores the chat messages, and the knowledge
+# base (document chunks with embeddings) for RAG. Every chatbot
+# replica reads and writes it. In production, use a managed database (RDS,
 # Cloud SQL, ...) and point the chatbot's PG* settings at it instead.
 apiVersion: v1
 kind: Service
@@ -28,7 +29,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:17-alpine
+          image: pgvector/pgvector:pg17   # Postgres 17 with the pgvector extension, for RAG
           ports: [{ name: postgres, containerPort: 5432 }]
           env:
             - name: POSTGRES_USER

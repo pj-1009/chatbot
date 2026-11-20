@@ -42,6 +42,7 @@
   .user { align-self: flex-end; background: var(--user); color: var(--user-text); }
   .assistant { align-self: flex-start; background: var(--bot); }
   .error { align-self: flex-start; color: var(--error); font-size: 14px; }
+  .sources { align-self: flex-start; color: var(--muted); font-size: 13px; margin-top: -4px; padding-left: 4px; }
   .empty { color: var(--muted); text-align: center; margin-top: 20vh; }
   form {
     width: 100%; max-width: 760px; padding: 16px; display: flex; gap: 8px;
@@ -129,7 +130,7 @@
     const myConversation = conversationId;
     bubble("user", text);
     const out = bubble("assistant", "…");
-    let reply = "", failed = null;
+    let reply = "", failed = null, sources = [];
     send.disabled = true;
     controller = new AbortController();
     try {
@@ -155,6 +156,7 @@
           if (!line) continue;
           const msg = JSON.parse(line);
           if (msg.error) failed = msg.error;
+          if (msg.sources) sources = msg.sources;
           if (msg.content) {
             reply += msg.content;
             out.textContent = reply;
@@ -171,6 +173,11 @@
     }
     if (myConversation !== conversationId) return;  // the user started a new chat meanwhile
     if (!reply) out.remove();
+    if (reply && sources.length) {
+      // One entry per document, in order of relevance.
+      const files = [...new Set(sources.map((s) => s.source))];
+      bubble("sources", "Sources: " + files.join(", "));
+    }
     if (failed) bubble("error", "Error: " + failed + " (this message wasn't saved)");
   }
 

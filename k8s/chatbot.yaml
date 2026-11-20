@@ -13,6 +13,8 @@ spec:
     metadata:
       labels: { app.kubernetes.io/name: chatbot }
     spec:
+      # Time for replies still streaming to finish after the pod is told to stop.
+      terminationGracePeriodSeconds: 90
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -22,12 +24,23 @@ spec:
           image: chatbot:local       # built and loaded into kind by `make k8s-up`
           imagePullPolicy: IfNotPresent
           ports: [{ name: http, containerPort: 8080 }]
+          lifecycle:
+            # Keep serving for a few seconds after the pod starts stopping,
+            # until the Service has stopped sending it new requests.
+            preStop:
+              sleep: { seconds: 5 }
           env:
             - { name: OLLAMA_HOST_URL, value: "http://ollama:11434" }
             - name: OLLAMA_MODEL
               valueFrom: { configMapKeyRef: { name: ollama, key: OLLAMA_MODEL } }
             - { name: SYSTEM_PROMPT, value: "You are a helpful, concise assistant." }
-            - { name: MAX_HISTORY, value: "50" }
+            - { name: MAX_HISTORY, value: "20" }
+            # RAG: search the knowledge base (loaded by the ingest job) for each question.
+            - name: EMBED_MODEL
+              valueFrom: { configMapKeyRef: { name: ollama, key: EMBED_MODEL } }
+            - { name: RAG_TOP_K, value: "4" }
+            - { name: RAG_MAX_DISTANCE, value: "0.38" }
+            - { name: RAG_MIN_KEYWORD_SCORE, value: "0.15" }
             - { name: PGHOST, value: postgres }
           envFrom:
             # PGUSER, PGPASSWORD and PGDATABASE

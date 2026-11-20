@@ -1,4 +1,7 @@
-.PHONY: help run venv db db-stop serve k8s-up k8s-status k8s-logs k8s-db k8s-down
+.PHONY: help run venv db db-stop ingest serve k8s-up k8s-ingest k8s-status k8s-logs k8s-db k8s-down
+
+# What the knowledge base (RAG) is built from. Add your own files to knowledge/.
+KNOWLEDGE    := README.md prompt.md docs knowledge
 
 KIND         ?= kind
 KIND_CLUSTER := chatbot
@@ -33,10 +36,13 @@ db: .env ## Start a local Postgres in Docker on 127.0.0.1:5433.
 	@set -a; . ./.env; set +a; \
 	docker start chatbot-pg 2>/dev/null || docker run -d --name chatbot-pg \
 		-e POSTGRES_USER="$$PGUSER" -e POSTGRES_PASSWORD="$$PGPASSWORD" -e POSTGRES_DB="$$PGDATABASE" \
-		-p 127.0.0.1:5433:5432 postgres:17-alpine
+		-p 127.0.0.1:5433:5432 pgvector/pgvector:pg17
 
 db-stop: ## Remove the local Postgres container and its data.
 	docker rm -f chatbot-pg
+
+ingest: $(PY) db ## Load the knowledge base into the local Postgres (needs `ollama pull nomic-embed-text`).
+	@set -a; . ./.env; set +a; $(PY) ingest.py --prune $(KNOWLEDGE)
 
 serve: $(PY) db ## Run the web app on http://localhost:8099 against the local Ollama and Postgres.
 	@set -a; . ./.env; set +a; PORT=8099 $(PY) server.py
@@ -62,14 +68,21 @@ k8s-up: $(K8S_DIR)/db-secret.env ## Create the kind cluster if needed, build and
 	@echo "Waiting for Ollama. The first start downloads the model (several GB) and can take a while."
 	$(KUBECTL) rollout status deployment/ollama --timeout=30m
 	$(KUBECTL) rollout status deployment/chatbot --timeout=180s
+	@$(MAKE) --no-print-directory k8s-ingest
 	@echo "Chatbot: http://localhost:8090"
+
+k8s-ingest: ## Load the knowledge base (the files baked into the image) into the cluster's database.
+	@job=ingest-$$(date +%Y%m%d-%H%M%S); \
+	$(KUBECTL) create job --from=cronjob/ingest $$job && \
+	$(KUBECTL) wait --for=condition=complete job/$$job --timeout=600s && \
+	$(KUBECTL) logs job/$$job --tail=3 || { $(KUBECTL) logs job/$$job --tail=20; exit 1; }
 
 k8s-status: ## Show the pods, services and volumes.
 	$(KUBECTL) get pods,services,pvc -o wide
 
 k8s-logs: ## Follow the logs of every pod.
 	$(KUBECTL) logs -f --prefix --all-containers --max-log-requests 10 \
-		-l 'app.kubernetes.io/name in (chatbot,ollama,postgres)'
+		-l 'app.kubernetes.io/name in (chatbot,ollama,postgres,ingest)'
 
 k8s-db: ## Open psql on the cluster's database.
 	$(KUBECTL) exec -it statefulset/postgres -- sh -c 'psql -U "$$POSTGRES_USER" "$$POSTGRES_DB"'

@@ -1,0 +1,48 @@
+# Loads the knowledge base for RAG: the project's README, prompt.md, docs/
+# and knowledge/ folders (baked into the chatbot image) are split into
+# chunks, embedded with Ollama and stored in Postgres.
+#
+# It's a suspended CronJob used as a template: it never runs on a schedule.
+# `make k8s-ingest` (also run by `make k8s-up`) starts a Job from it:
+#   kubectl create job --from=cronjob/ingest ingest-<time>
+# Unchanged files are skipped, so running it again is cheap.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ingest
+  labels: { app.kubernetes.io/name: ingest }
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 3600   # delete the finished Job after an hour
+      template:
+        metadata:
+          labels: { app.kubernetes.io/name: ingest }
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: ingest
+              image: chatbot:local
+              imagePullPolicy: IfNotPresent
+              command: ["python", "ingest.py", "--prune", "README.md", "prompt.md", "docs", "knowledge"]
+              env:
+                - { name: OLLAMA_HOST_URL, value: "http://ollama:11434" }
+                - name: EMBED_MODEL
+                  valueFrom: { configMapKeyRef: { name: ollama, key: EMBED_MODEL } }
+                - { name: PGHOST, value: postgres }
+              envFrom:
+                - secretRef: { name: chatbot-db }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }

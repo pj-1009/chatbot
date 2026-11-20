@@ -18,6 +18,8 @@ metadata:
   labels: { app.kubernetes.io/name: ollama }
 data:
   OLLAMA_MODEL: gemma4:e2b
+  # Turns text into vectors for RAG (knowledge-base search). About 270 MB.
+  EMBED_MODEL: nomic-embed-text
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -35,9 +37,9 @@ spec:
       labels: { app.kubernetes.io/name: ollama }
     spec:
       initContainers:
-        # Downloads the model if it isn't on the volume yet. When it's already
-        # there, `ollama pull` only checks it and finishes quickly.
-        - name: pull-model
+        # Downloads the models if they aren't on the volume yet. When they're
+        # already there, `ollama pull` only checks them and finishes quickly.
+        - name: pull-models
           image: ollama/ollama:0.35.1
           command:
             - sh
@@ -46,6 +48,7 @@ spec:
               ollama serve &
               until ollama list >/dev/null 2>&1; do sleep 1; done
               ollama pull "$OLLAMA_MODEL"
+              ollama pull "$EMBED_MODEL"
           envFrom: [{ configMapRef: { name: ollama } }]
           volumeMounts: [{ name: models, mountPath: /root/.ollama }]
       containers:
@@ -55,7 +58,11 @@ spec:
           env:
             # Keep the model in memory between chats instead of the default 5 minutes.
             - { name: OLLAMA_KEEP_ALIVE, value: "1h" }
-            # One request at a time and a modest context window keep memory use down on CPU.
+            # One request at a time and a modest context window keep memory
+            # use down on CPU. 4096 tokens fits the system prompt, up to 4
+            # knowledge-base excerpts (RAG, about 700 tokens) and recent
+            # messages; Ollama drops the oldest messages if a chat runs over.
+            # (8192 pushed the pod to its memory limit with both models loaded.)
             - { name: OLLAMA_NUM_PARALLEL, value: "1" }
             - { name: OLLAMA_CONTEXT_LENGTH, value: "4096" }
           resources:

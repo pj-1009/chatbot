@@ -10,8 +10,10 @@ Endpoints:
   GET  /readyz                            readiness: the database answers
   GET  /api/history?conversation_id=ID    {"messages": [{"role", "content"}, ...]}
   POST /api/chat    {"conversation_id": ID, "message": "..."}
-                    replies with newline-delimited JSON: {"content": "..."} pieces,
-                    then {"done": true}, or {"error": "..."} if something failed.
+                    replies with newline-delimited JSON: first {"sources": [...]}
+                    (the knowledge-base chunks used, possibly none), then
+                    {"content": "..."} pieces, then {"done": true}, or
+                    {"error": "..."} if something failed.
   POST /api/reset   {"conversation_id": ID}  deletes the conversation's messages
 
 A conversation ID is a UUID chosen by the client.
@@ -20,7 +22,11 @@ Configuration (environment variables):
   OLLAMA_HOST_URL  Ollama server URL  (default http://localhost:11434)
   OLLAMA_MODEL     model name         (default gemma4:e2b)
   SYSTEM_PROMPT    optional system prompt added to every conversation
-  MAX_HISTORY      how many earlier messages to send to the model (default 50)
+  MAX_HISTORY      how many earlier messages to send to the model (default 20)
+  EMBED_MODEL      embedding model for RAG (default nomic-embed-text)
+  RAG_TOP_K        how many knowledge-base chunks to add to a question (default 4; 0 turns RAG off)
+  RAG_MAX_DISTANCE leave out chunks less similar than this (cosine distance, default 0.38)
+  RAG_MIN_KEYWORD_SCORE  leave out weaker keyword matches (0 to 1, default 0.15)
   PORT             port to listen on  (default 8080)
   PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE (or DATABASE_URL)  the database
 """
@@ -35,13 +41,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import rag
 from chat import DEFAULT_HOST, DEFAULT_MODEL, stream_chat
 from db import Store
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST_URL", DEFAULT_HOST)
 MODEL = os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
 SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT", "").strip()
-MAX_HISTORY = int(os.environ.get("MAX_HISTORY", "50"))
+MAX_HISTORY = int(os.environ.get("MAX_HISTORY", "20"))
+EMBED_MODEL = os.environ.get("EMBED_MODEL", rag.DEFAULT_EMBED_MODEL)
+RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "4"))
+RAG_MAX_DISTANCE = float(os.environ.get("RAG_MAX_DISTANCE", "0.38"))
+RAG_MIN_KEYWORD_SCORE = float(os.environ.get("RAG_MIN_KEYWORD_SCORE", "0.15"))
 PORT = int(os.environ.get("PORT", "8080"))
 
 MAX_BODY_BYTES = 100_000
@@ -62,7 +73,7 @@ def conversation_id(value):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "chatbot/2.0"
+    server_version = "chatbot/3.0"
 
     # --- routing ---------------------------------------------------------
 
@@ -122,9 +133,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(503, {"error": "the database is unavailable, try again shortly"})
             return
 
+        chunks = self.retrieve(history, text)
+        system = "\n\n".join(p for p in (SYSTEM_PROMPT, rag.context_prompt(chunks) if chunks else "") if p)
         messages = history + [{"role": "user", "content": text}]
-        if SYSTEM_PROMPT:
-            messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+        if system:
+            messages.insert(0, {"role": "system", "content": system})
 
         # Stream the reply. The response has no Content-Length, so the
         # connection closes when the reply ends (HTTP/1.0 style).
@@ -133,6 +146,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Accel-Buffering", "no")  # don't let a proxy buffer the stream
         self.end_headers()
+        try:
+            self.write_line({"sources": [
+                {"source": c["source"], "heading": c["heading"],
+                 "distance": c["distance"], "keyword_score": c["keyword_score"]}
+                for c in chunks
+            ]})
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
         reply = []
         try:
@@ -164,6 +185,22 @@ class Handler(BaseHTTPRequestHandler):
             self.write_line({"done": True})
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def retrieve(self, history, text):
+        """The knowledge-base chunks relevant to this question (RAG).
+
+        Returns [] when RAG is off, nothing matches, or the search fails: the
+        bot then answers without extra context rather than not at all.
+        """
+        if RAG_TOP_K <= 0:
+            return []
+        try:
+            query = rag.search_text(history, text)
+            vector = rag.embed_query(OLLAMA_HOST, EMBED_MODEL, query)
+            return store.search(vector, query, RAG_TOP_K, RAG_MAX_DISTANCE, RAG_MIN_KEYWORD_SCORE)
+        except Exception as e:
+            self.log_message("knowledge-base search failed, answering without it: %s", e)
+            return []
 
     # --- helpers ---------------------------------------------------------
 
@@ -222,8 +259,11 @@ def stop(signum, frame):
 def main():
     store.open()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    server.daemon_threads = True
-    # Kubernetes sends SIGTERM to stop a pod; exit cleanly instead of being killed.
+    # On shutdown, server_close() waits for requests in progress, so replies
+    # that are still streaming get to finish.
+    server.daemon_threads = False
+    # Kubernetes sends SIGTERM to stop a pod: stop taking new requests, let
+    # the current ones finish, then exit.
     signal.signal(signal.SIGTERM, stop)
     print(f"chatbot listening on :{PORT}, model {MODEL} at {OLLAMA_HOST}", flush=True)
     try:

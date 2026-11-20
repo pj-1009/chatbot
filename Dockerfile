@@ -6,8 +6,12 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
-COPY chat.py db.py server.py ./
+COPY chat.py db.py rag.py server.py ingest.py ./
 COPY static/ ./static/
+# The knowledge base for RAG (loaded into Postgres by the ingest job).
+COPY README.md prompt.md ./
+COPY docs/ ./docs/
+COPY knowledge/ ./knowledge/
 
 # Run as an unprivileged user.
 USER 10001
